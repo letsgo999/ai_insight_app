@@ -13,15 +13,19 @@ import yt_dlp
 # --- 설정 ---
 st.set_page_config(page_title="유튜브 서칭 기반 AI BM 탐색기", page_icon="🕵️‍♂️")
 
-FONT_FILE = "NanumGothic.ttf"
-FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+# [수정] 폰트 파일 및 URL 설정 (일반체 + 볼드체)
+FONT_REGULAR_FILE = "NanumGothic.ttf"
+FONT_BOLD_FILE = "NanumGothicBold.ttf"
+
+FONT_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+FONT_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
 
 # --- 세션 상태 초기화 ---
 if 'analysis_step' not in st.session_state: st.session_state['analysis_step'] = 'idle'
 if 'current_video' not in st.session_state: st.session_state['current_video'] = None
 if 'final_script' not in st.session_state: st.session_state['final_script'] = None
 if 'source_type' not in st.session_state: st.session_state['source_type'] = None
-if 'analysis_result' not in st.session_state: st.session_state['analysis_result'] = None # 분석 결과 저장용
+if 'analysis_result' not in st.session_state: st.session_state['analysis_result'] = None
 
 # --- GitHub 연동 함수 ---
 def get_github_repo():
@@ -52,12 +56,20 @@ def save_channels_to_github(new_data):
         return True
     except: return False
 
-# --- 일반 함수 ---
-def download_font_if_not_exists():
-    if not os.path.exists(FONT_FILE):
+# --- [수정] 폰트 다운로드 함수 (볼드체 포함) ---
+def download_fonts_if_not_exists():
+    # 일반체 다운로드
+    if not os.path.exists(FONT_REGULAR_FILE):
         try:
-            response = requests.get(FONT_URL)
-            with open(FONT_FILE, "wb") as f: f.write(response.content)
+            response = requests.get(FONT_REGULAR_URL)
+            with open(FONT_REGULAR_FILE, "wb") as f: f.write(response.content)
+        except: pass
+    
+    # 볼드체 다운로드
+    if not os.path.exists(FONT_BOLD_FILE):
+        try:
+            response = requests.get(FONT_BOLD_URL)
+            with open(FONT_BOLD_FILE, "wb") as f: f.write(response.content)
         except: pass
 
 def get_channel_info_from_handle(api_key, handle_str):
@@ -137,6 +149,7 @@ def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
     prompt = """
     너는 'AI 에이전트 파견 비즈니스' 전문 컨설턴트야. 
     제공된 스크립트를 분석해서 비즈니스 인사이트 5가지를 도출해줘.
+    중요한 키워드나 제목에는 **강조 표시(볼드체)**를 적극적으로 사용해줘.
     형식: 1.영상요약 2.핵심기술 3.비즈니스 아이디어 5가지 4.결론
     """
     try:
@@ -150,29 +163,40 @@ def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
         return response.choices[0].message.content
     except Exception as e: return str(e)
 
-# --- [수정됨] PDF 생성 함수 (에러 해결) ---
+# --- [수정] PDF 생성 함수 (볼드체 적용) ---
 def create_pdf(report_text):
-    download_font_if_not_exists()
+    download_fonts_if_not_exists()
+    
     class PDF(FPDF):
         def header(self):
-            if os.path.exists(FONT_FILE):
-                self.add_font('NanumGothic', '', FONT_FILE, uni=True)
-                self.set_font('NanumGothic', '', 10)
+            # 헤더 폰트 설정
+            if os.path.exists(FONT_REGULAR_FILE):
+                self.add_font('NanumGothic', '', FONT_REGULAR_FILE, uni=True)
+                # 볼드체 등록 (style='B')
+                if os.path.exists(FONT_BOLD_FILE):
+                    self.add_font('NanumGothic', 'B', FONT_BOLD_FILE, uni=True)
+                
+                self.set_font('NanumGothic', 'B', 12) # 헤더는 볼드체
             self.cell(0, 10, 'AI Business Insight Report', 0, 1, 'C')
-    
+            self.ln(10)
+
     pdf = PDF()
     pdf.add_page()
     
-    if os.path.exists(FONT_FILE):
-        pdf.add_font('NanumGothic', '', FONT_FILE, uni=True)
+    # 본문 폰트 등록
+    if os.path.exists(FONT_REGULAR_FILE):
+        pdf.add_font('NanumGothic', '', FONT_REGULAR_FILE, uni=True)
+        if os.path.exists(FONT_BOLD_FILE):
+            pdf.add_font('NanumGothic', 'B', FONT_BOLD_FILE, uni=True)
+        
         pdf.set_font('NanumGothic', '', 11)
     else:
         pdf.set_font("Arial", size=11)
 
-    # 텍스트 줄바꿈 처리 및 쓰기
-    pdf.multi_cell(0, 8, report_text)
+    # [핵심] markdown=True 옵션 사용
+    # **텍스트** 를 인식하여 볼드체로 변환해줍니다.
+    pdf.multi_cell(0, 8, report_text, markdown=True)
     
-    # [핵심 수정] .encode('latin-1') 제거 및 bytes로 변환
     return bytes(pdf.output())
 
 # --- 데이터 로드 ---
@@ -255,12 +279,11 @@ else:
             st.session_state['channels'] = channel_list
             st.rerun()
 
-    # 분석 실행 버튼
     if st.button("🚀 분석 및 리포트 생성"):
         st.session_state['analysis_step'] = 'searching'
         st.session_state['final_script'] = None
         st.session_state['source_type'] = None
-        st.session_state['analysis_result'] = None # 초기화
+        st.session_state['analysis_result'] = None
         st.rerun()
 
 # --- 실행 로직 ---
@@ -289,7 +312,6 @@ if st.session_state['analysis_step'] == 'searching':
                 st.session_state['analysis_step'] = 'need_upload'
                 st.rerun()
 
-# 수동 업로드 화면
 if st.session_state['analysis_step'] == 'need_upload':
     st.error("❌ 자막 추출이 되지 않습니다.")
     st.warning("분석할 동영상의 스크립트 파일을 직접 업로드해주세요!")
@@ -303,28 +325,23 @@ if st.session_state['analysis_step'] == 'need_upload':
         st.session_state['analysis_step'] = 'analyzing'
         st.rerun()
 
-# AI 분석 및 결과 화면
 if st.session_state['analysis_step'] == 'analyzing':
     video_info = st.session_state['current_video']
     script = st.session_state['final_script']
     
-    # 이미 분석된 결과가 없으면 분석 실행
     if st.session_state['analysis_result'] is None:
         with st.status("🧠 AI 인사이트 도출 중...", expanded=True) as status:
             insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
-            st.session_state['analysis_result'] = insight # 결과 저장
+            st.session_state['analysis_result'] = insight
             status.update(label="완료!", state="complete")
     
-    # 결과 표시
     if st.session_state['analysis_result']:
         st.subheader("📊 분석 결과")
         st.info(f"출처: {st.session_state['source_type']}")
         st.markdown(st.session_state['analysis_result'])
         
-        # PDF 생성 및 다운로드
         pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n출처: {st.session_state['source_type']}\n\n{st.session_state['analysis_result']}"
         
-        # 수정된 create_pdf 호출
         pdf_bytes = create_pdf(pdf_content)
         
         st.download_button(
@@ -339,4 +356,5 @@ if st.session_state['analysis_step'] == 'analyzing':
         st.session_state['analysis_result'] = None
         st.rerun()
 
-download_font_if_not_exists()
+# 폰트 다운로드 (배경)
+download_fonts_if_not_exists()
