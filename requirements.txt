@@ -4,3 +4,4 @@ youtube-transcript-api
 openai
 fpdf2
 requests
+PyGithub
