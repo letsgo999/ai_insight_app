@@ -130,10 +130,39 @@ def get_recent_video(api_key, channel_id, days=7):
     except: return None
 
 def get_video_script(video_id):
+    """
+    강력한 자막 추출 함수:
+    1. 한글 자막(수동/자동) 시도
+    2. 실패 시 영어 자막을 찾아 한글로 번역
+    3. 그 외 다른 언어 자막이라도 있으면 한글로 번역
+    """
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ko'])
-        return " ".join([t['text'] for t in transcript])
-    except: return None
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # 1. 우선 한국어 자막이 있는지 찾습니다.
+        try:
+            transcript = transcript_list.find_transcript(['ko'])
+        except:
+            # 2. 한국어가 없다면, 번역 가능한 다른 자막(주로 영어)을 찾습니다.
+            try:
+                # 영어 자막이나 자동생성 자막을 찾음
+                transcript = transcript_list.find_transcript(['en'])
+            except:
+                # 영어도 없으면, 리스트의 첫 번째(아무 언어) 자막을 가져옴
+                transcript = next(iter(transcript_list))
+            
+            # 찾은 자막을 한국어로 번역합니다. (YouTube 내부 기능 활용)
+            transcript = transcript.translate('ko')
+
+        # 3. 텍스트 추출 및 합치기
+        transcript_data = transcript.fetch()
+        full_script = " ".join([t['text'] for t in transcript_data])
+        return full_script
+
+    except Exception as e:
+        # 자막 기능 자체가 비활성화된 영상 등
+        print(f"자막 추출 실패: {e}")
+        return None
 
 def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
     client = OpenAI(api_key=openai_api_key)
