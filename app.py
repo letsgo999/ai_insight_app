@@ -16,15 +16,12 @@ st.set_page_config(page_title="유튜브 서칭 기반 AI BM 탐색기", page_ic
 FONT_FILE = "NanumGothic.ttf"
 FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
 
-# --- 세션 상태 초기화 (파일 업로드 시 끊김 방지) ---
-if 'analysis_step' not in st.session_state:
-    st.session_state['analysis_step'] = 'idle' # idle, searching, need_upload, analyzing, done
-if 'current_video' not in st.session_state:
-    st.session_state['current_video'] = None
-if 'final_script' not in st.session_state:
-    st.session_state['final_script'] = None
-if 'source_type' not in st.session_state:
-    st.session_state['source_type'] = None
+# --- 세션 상태 초기화 ---
+if 'analysis_step' not in st.session_state: st.session_state['analysis_step'] = 'idle'
+if 'current_video' not in st.session_state: st.session_state['current_video'] = None
+if 'final_script' not in st.session_state: st.session_state['final_script'] = None
+if 'source_type' not in st.session_state: st.session_state['source_type'] = None
+if 'analysis_result' not in st.session_state: st.session_state['analysis_result'] = None # 분석 결과 저장용
 
 # --- GitHub 연동 함수 ---
 def get_github_repo():
@@ -92,7 +89,7 @@ def get_recent_video(api_key, channel_id, days=7):
         return None
     except: return None
 
-# --- 자막/오디오 추출 로직 ---
+# --- 자막/오디오 추출 ---
 def transcribe_audio_with_whisper(openai_api_key, video_url):
     client = OpenAI(api_key=openai_api_key)
     audio_file = "temp_audio.mp3"
@@ -110,7 +107,7 @@ def transcribe_audio_with_whisper(openai_api_key, video_url):
             os.remove(audio_file)
             return transcript
         return None
-    except: 
+    except:
         if os.path.exists(audio_file): os.remove(audio_file)
         return None
 
@@ -132,9 +129,8 @@ def get_video_content(video_id, openai_api_key, status_container):
     status_container.warning("🎙️ 자막이 없습니다. 음성 스크립트를 추출 중입니다 (최대 2분 소요)...")
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     script = transcribe_audio_with_whisper(openai_api_key, video_url)
-    
     if script: return script, "음성추출(Whisper)"
-    else: return None, None # 실패 시 None 반환
+    else: return None, None
 
 def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
     client = OpenAI(api_key=openai_api_key)
@@ -154,6 +150,7 @@ def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
         return response.choices[0].message.content
     except Exception as e: return str(e)
 
+# --- [수정됨] PDF 생성 함수 (에러 해결) ---
 def create_pdf(report_text):
     download_font_if_not_exists()
     class PDF(FPDF):
@@ -162,14 +159,21 @@ def create_pdf(report_text):
                 self.add_font('NanumGothic', '', FONT_FILE, uni=True)
                 self.set_font('NanumGothic', '', 10)
             self.cell(0, 10, 'AI Business Insight Report', 0, 1, 'C')
+    
     pdf = PDF()
     pdf.add_page()
+    
     if os.path.exists(FONT_FILE):
         pdf.add_font('NanumGothic', '', FONT_FILE, uni=True)
         pdf.set_font('NanumGothic', '', 11)
-    else: pdf.set_font("Arial", size=11)
+    else:
+        pdf.set_font("Arial", size=11)
+
+    # 텍스트 줄바꿈 처리 및 쓰기
     pdf.multi_cell(0, 8, report_text)
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # [핵심 수정] .encode('latin-1') 제거 및 bytes로 변환
+    return bytes(pdf.output())
 
 # --- 데이터 로드 ---
 if 'channels' not in st.session_state:
@@ -198,12 +202,10 @@ channel_names.append("➕ [새 채널 추가]")
 st.subheader("1️⃣ 분석할 채널 선택")
 selection = st.selectbox("채널 목록", channel_names)
 
-# [새 채널 추가 로직]
 if selection == "➕ [새 채널 추가]":
     st.info("유튜브 핸들(@name)을 입력하세요.")
     if len(channel_list) >= 15:
         st.error("최대 15개 제한입니다.")
-        st.write("🗑️ **채널 관리**")
         for idx, ch in enumerate(channel_list):
             c1, c2 = st.columns([4, 1])
             c1.write(f"**{ch['name']}**")
@@ -227,7 +229,6 @@ if selection == "➕ [새 채널 추가]":
                         st.rerun()
                 else: st.error("채널을 찾을 수 없습니다.")
 
-# [기존 채널 분석 로직]
 else:
     selected_idx = channel_names.index(selection)
     target_channel = channel_list[selected_idx]
@@ -254,15 +255,15 @@ else:
             st.session_state['channels'] = channel_list
             st.rerun()
 
-    # --- 분석 실행 버튼 ---
+    # 분석 실행 버튼
     if st.button("🚀 분석 및 리포트 생성"):
-        # 초기화 및 검색 시작
         st.session_state['analysis_step'] = 'searching'
         st.session_state['final_script'] = None
         st.session_state['source_type'] = None
+        st.session_state['analysis_result'] = None # 초기화
         st.rerun()
 
-# --- 실행 로직 (상태 기반 처리) ---
+# --- 실행 로직 ---
 
 if st.session_state['analysis_step'] == 'searching':
     with st.status("🔍 최신 영상 검색 중...", expanded=True) as status:
@@ -276,22 +277,19 @@ if st.session_state['analysis_step'] == 'searching':
             st.session_state['current_video'] = video_info
             st.write(f"🎥 영상 발견: {video_info['title']}")
             
-            # 자막/오디오 추출 시도
             script, source_type = get_video_content(video_info['video_id'], openai_api_key, status)
             
             if script:
-                # 성공 시 바로 분석 단계로
                 st.session_state['final_script'] = script
                 st.session_state['source_type'] = source_type
                 st.session_state['analysis_step'] = 'analyzing'
                 st.rerun()
             else:
-                # 실패 시 수동 업로드 단계로
                 status.update(label="자동 추출 실패", state="error")
                 st.session_state['analysis_step'] = 'need_upload'
                 st.rerun()
 
-# 수동 업로드 대기 화면
+# 수동 업로드 화면
 if st.session_state['analysis_step'] == 'need_upload':
     st.error("❌ 자막 추출이 되지 않습니다.")
     st.warning("분석할 동영상의 스크립트 파일을 직접 업로드해주세요!")
@@ -310,19 +308,35 @@ if st.session_state['analysis_step'] == 'analyzing':
     video_info = st.session_state['current_video']
     script = st.session_state['final_script']
     
-    with st.status("🧠 AI 인사이트 도출 중...", expanded=True) as status:
-        insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
-        status.update(label="완료!", state="complete")
-        
+    # 이미 분석된 결과가 없으면 분석 실행
+    if st.session_state['analysis_result'] is None:
+        with st.status("🧠 AI 인사이트 도출 중...", expanded=True) as status:
+            insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
+            st.session_state['analysis_result'] = insight # 결과 저장
+            status.update(label="완료!", state="complete")
+    
+    # 결과 표시
+    if st.session_state['analysis_result']:
         st.subheader("📊 분석 결과")
         st.info(f"출처: {st.session_state['source_type']}")
-        st.markdown(insight)
+        st.markdown(st.session_state['analysis_result'])
         
-        pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n출처: {st.session_state['source_type']}\n\n{insight}"
-        st.download_button("📥 PDF 다운로드", create_pdf(pdf_content), "report.pdf", "application/pdf")
+        # PDF 생성 및 다운로드
+        pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n출처: {st.session_state['source_type']}\n\n{st.session_state['analysis_result']}"
+        
+        # 수정된 create_pdf 호출
+        pdf_bytes = create_pdf(pdf_content)
+        
+        st.download_button(
+            label="📥 PDF 다운로드",
+            data=pdf_bytes,
+            file_name="report.pdf",
+            mime="application/pdf"
+        )
         
     if st.button("처음으로 돌아가기"):
         st.session_state['analysis_step'] = 'idle'
+        st.session_state['analysis_result'] = None
         st.rerun()
 
 download_font_if_not_exists()
