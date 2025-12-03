@@ -8,7 +8,7 @@ import os
 import requests
 import json
 from github import Github
-import yt_dlp # 오디오 다운로드용
+import yt_dlp
 
 # --- 설정 ---
 st.set_page_config(page_title="유튜브 서칭 기반 AI BM 탐색기", page_icon="🕵️‍♂️")
@@ -16,7 +16,17 @@ st.set_page_config(page_title="유튜브 서칭 기반 AI BM 탐색기", page_ic
 FONT_FILE = "NanumGothic.ttf"
 FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
 
-# --- GitHub 연동 함수 (기존과 동일) ---
+# --- 세션 상태 초기화 (파일 업로드 시 끊김 방지) ---
+if 'analysis_step' not in st.session_state:
+    st.session_state['analysis_step'] = 'idle' # idle, searching, need_upload, analyzing, done
+if 'current_video' not in st.session_state:
+    st.session_state['current_video'] = None
+if 'final_script' not in st.session_state:
+    st.session_state['final_script'] = None
+if 'source_type' not in st.session_state:
+    st.session_state['source_type'] = None
+
+# --- GitHub 연동 함수 ---
 def get_github_repo():
     try:
         token = st.secrets["GITHUB_TOKEN"]
@@ -82,81 +92,49 @@ def get_recent_video(api_key, channel_id, days=7):
         return None
     except: return None
 
-# --- [핵심 수정] 자막 및 오디오 추출 로직 ---
-
+# --- 자막/오디오 추출 로직 ---
 def transcribe_audio_with_whisper(openai_api_key, video_url):
-    """자막이 없을 때 오디오를 다운받아 Whisper로 변환"""
     client = OpenAI(api_key=openai_api_key)
     audio_file = "temp_audio.mp3"
-    
-    # 1. 오디오 다운로드 (yt-dlp)
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
         'outtmpl': 'temp_audio',
         'quiet': True
     }
-    
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-        
-        # 2. Whisper API 호출
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([video_url])
         if os.path.exists(audio_file):
             with open(audio_file, "rb") as f:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1", 
-                    file=f,
-                    response_format="text"
-                )
-            
-            # 파일 정리
+                transcript = client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
             os.remove(audio_file)
             return transcript
-        else:
-            return None
-    except Exception as e:
-        print(f"Audio Error: {e}")
+        return None
+    except: 
         if os.path.exists(audio_file): os.remove(audio_file)
         return None
 
 def get_video_content(video_id, openai_api_key, status_container):
-    """자막 우선 시도 -> 실패 시 오디오 추출 (상태 메시지 업데이트 포함)"""
-    
-    # 1단계: 한글 자막 시도
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         transcript = transcript_list.find_transcript(['ko'])
-        text_data = transcript.fetch()
-        return " ".join([t['text'] for t in text_data]), "자막(KO)"
-    except:
-        pass # 한글 자막 없음, 다음 단계로
+        return " ".join([t['text'] for t in transcript.fetch()]), "자막(KO)"
+    except: pass
 
-    # 2단계: 영어/자동 자막 번역 시도
     try:
         status_container.info("🔤 한글 자막이 없어 영어 자막을 번역 중입니다...")
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_transcript(['en'])
-        except:
-            transcript = next(iter(transcript_list)) # 아무 언어나 가져옴
-        
-        translated_transcript = transcript.translate('ko')
-        text_data = translated_transcript.fetch()
-        return " ".join([t['text'] for t in text_data]), "자막(번역)"
-    except:
-        pass # 자막 자체가 없음, 다음 단계로
+        try: transcript = transcript_list.find_transcript(['en'])
+        except: transcript = next(iter(transcript_list))
+        return " ".join([t['text'] for t in transcript.translate('ko').fetch()]), "자막(번역)"
+    except: pass
 
-    # 3단계: 오디오 추출 (Whisper)
-    status_container.warning("🎙️ 자막이 없습니다. 음성 스크립트를 추출하여 텍스트를 생성합니다. (최대 2분 소요)")
+    status_container.warning("🎙️ 자막이 없습니다. 음성 스크립트를 추출 중입니다 (최대 2분 소요)...")
     video_url = f"https://www.youtube.com/watch?v={video_id}"
-    
     script = transcribe_audio_with_whisper(openai_api_key, video_url)
     
-    if script:
-        return script, "음성추출(Whisper)"
-    else:
-        return None, "실패"
+    if script: return script, "음성추출(Whisper)"
+    else: return None, None # 실패 시 None 반환
 
 def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
     client = OpenAI(api_key=openai_api_key)
@@ -200,25 +178,16 @@ if 'channels' not in st.session_state:
 
 # --- UI 구현 ---
 st.sidebar.header("🔑 설정")
+youtube_api_key = st.secrets.get("YOUTUBE_API_KEY")
+openai_api_key = st.secrets.get("OPENAI_API_KEY")
 
-# API 키 확인 (입력창 숨김, 상태만 표시)
-if "YOUTUBE_API_KEY" in st.secrets:
-    youtube_api_key = st.secrets["YOUTUBE_API_KEY"]
-    st.sidebar.success("✅ 유튜브 API 키값이 정상적으로 호출되었습니다.")
-else:
-    st.sidebar.error("유튜브 API 키 설정 필요")
-    youtube_api_key = None
+if youtube_api_key: st.sidebar.success("✅ 유튜브 API 키 호출됨")
+else: st.sidebar.error("유튜브 API 키 설정 필요")
 
-if "OPENAI_API_KEY" in st.secrets:
-    openai_api_key = st.secrets["OPENAI_API_KEY"]
-    st.sidebar.success("✅ OpenAI API 키값이 정상적으로 호출되었습니다.")
-else:
-    st.sidebar.error("OpenAI API 키 설정 필요")
-    openai_api_key = None
+if openai_api_key: st.sidebar.success("✅ OpenAI API 키 호출됨")
+else: st.sidebar.error("OpenAI API 키 설정 필요")
 
-if not youtube_api_key or not openai_api_key:
-    st.warning("설정(Secrets)에서 API 키를 먼저 입력해주세요.")
-    st.stop()
+if not youtube_api_key or not openai_api_key: st.stop()
 
 st.title("🕵️‍♂️ 유튜브 서칭 기반 AI BM 탐색기")
 
@@ -233,7 +202,7 @@ selection = st.selectbox("채널 목록", channel_names)
 if selection == "➕ [새 채널 추가]":
     st.info("유튜브 핸들(@name)을 입력하세요.")
     if len(channel_list) >= 15:
-        st.error("최대 15개 제한입니다. 삭제 후 추가하세요.")
+        st.error("최대 15개 제한입니다.")
         st.write("🗑️ **채널 관리**")
         for idx, ch in enumerate(channel_list):
             c1, c2 = st.columns([4, 1])
@@ -249,8 +218,7 @@ if selection == "➕ [새 채널 추가]":
             if st.form_submit_button("추가"):
                 cid, ctitle, chandle = get_channel_info_from_handle(youtube_api_key, new_handle)
                 if cid:
-                    if any(c['id'] == cid for c in channel_list):
-                        st.warning("이미 있는 채널입니다.")
+                    if any(c['id'] == cid for c in channel_list): st.warning("이미 있는 채널입니다.")
                     else:
                         channel_list.append({"name": ctitle, "handle": chandle, "id": cid})
                         save_channels_to_github(channel_list)
@@ -279,7 +247,6 @@ else:
                     st.session_state['channels'] = channel_list
                     st.rerun()
                 else: st.error("유효하지 않은 핸들입니다.")
-        
         st.divider()
         if st.button("삭제 ❌", type="primary"):
             del channel_list[selected_idx]
@@ -287,33 +254,75 @@ else:
             st.session_state['channels'] = channel_list
             st.rerun()
 
+    # --- 분석 실행 버튼 ---
     if st.button("🚀 분석 및 리포트 생성"):
-        with st.status("분석 진행 중...", expanded=True) as status:
-            st.write("🔍 최신 영상 검색 중...")
-            video_info = get_recent_video(youtube_api_key, target_channel['id'])
+        # 초기화 및 검색 시작
+        st.session_state['analysis_step'] = 'searching'
+        st.session_state['final_script'] = None
+        st.session_state['source_type'] = None
+        st.rerun()
+
+# --- 실행 로직 (상태 기반 처리) ---
+
+if st.session_state['analysis_step'] == 'searching':
+    with st.status("🔍 최신 영상 검색 중...", expanded=True) as status:
+        video_info = get_recent_video(youtube_api_key, target_channel['id'])
+        
+        if not video_info:
+            status.update(label="신규 영상 없음", state="error")
+            st.warning("최근 1주일 이내 영상이 없습니다.")
+            st.session_state['analysis_step'] = 'idle'
+        else:
+            st.session_state['current_video'] = video_info
+            st.write(f"🎥 영상 발견: {video_info['title']}")
             
-            if not video_info:
-                status.update(label="신규 영상 없음", state="error")
-                st.warning("최근 1주일 이내 영상이 없습니다.")
+            # 자막/오디오 추출 시도
+            script, source_type = get_video_content(video_info['video_id'], openai_api_key, status)
+            
+            if script:
+                # 성공 시 바로 분석 단계로
+                st.session_state['final_script'] = script
+                st.session_state['source_type'] = source_type
+                st.session_state['analysis_step'] = 'analyzing'
+                st.rerun()
             else:
-                st.write(f"🎥 영상 발견: {video_info['title']}")
-                st.write("📝 스크립트 추출 시도 중...")
-                
-                # [수정된 로직] 자막 확인 -> 번역 -> 실패시 음성 추출
-                script, source_type = get_video_content(video_info['video_id'], openai_api_key, status)
-                
-                if not script:
-                    status.update(label="실패", state="error")
-                    st.error("자막이 없고, 음성 추출도 실패했습니다.")
-                else:
-                    st.write(f"✅ 콘텐츠 확보 완료 ({source_type}) -> AI 분석 시작")
-                    insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
-                    status.update(label="완료!", state="complete")
-                    
-                    st.subheader("📊 분석 결과")
-                    st.markdown(insight)
-                    
-                    pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n출처: {source_type}\n\n{insight}"
-                    st.download_button("📥 PDF 다운로드", create_pdf(pdf_content), "report.pdf", "application/pdf")
+                # 실패 시 수동 업로드 단계로
+                status.update(label="자동 추출 실패", state="error")
+                st.session_state['analysis_step'] = 'need_upload'
+                st.rerun()
+
+# 수동 업로드 대기 화면
+if st.session_state['analysis_step'] == 'need_upload':
+    st.error("❌ 자막 추출이 되지 않습니다.")
+    st.warning("분석할 동영상의 스크립트 파일을 직접 업로드해주세요!")
+    
+    uploaded_file = st.file_uploader("스크립트 파일 (.txt)", type="txt")
+    
+    if uploaded_file is not None:
+        string_data = uploaded_file.getvalue().decode("utf-8")
+        st.session_state['final_script'] = string_data
+        st.session_state['source_type'] = "수동 업로드 (파일)"
+        st.session_state['analysis_step'] = 'analyzing'
+        st.rerun()
+
+# AI 분석 및 결과 화면
+if st.session_state['analysis_step'] == 'analyzing':
+    video_info = st.session_state['current_video']
+    script = st.session_state['final_script']
+    
+    with st.status("🧠 AI 인사이트 도출 중...", expanded=True) as status:
+        insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
+        status.update(label="완료!", state="complete")
+        
+        st.subheader("📊 분석 결과")
+        st.info(f"출처: {st.session_state['source_type']}")
+        st.markdown(insight)
+        
+        pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n출처: {st.session_state['source_type']}\n\n{insight}"
+        st.download_button("📥 PDF 다운로드", create_pdf(pdf_content), "report.pdf", "application/pdf")
+        
+    if st.button("처음으로 돌아가기"):
+        st.session_state['analysis_step'] = 'idle'
+        st.rerun()
 
 download_font_if_not_exists()
