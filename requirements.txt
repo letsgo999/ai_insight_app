@@ -5,3 +5,4 @@ openai
 fpdf2
 requests
 PyGithub
+yt-dlp
