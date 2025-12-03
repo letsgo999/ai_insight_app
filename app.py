@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import os
 import requests
 import json
-from github import Github # PyGithub 라이브러리
+from github import Github 
 
 # --- 설정 ---
 st.set_page_config(page_title="유튜브 서칭 기반 AI BM 탐색기", page_icon="🕵️‍♂️")
@@ -18,7 +18,6 @@ FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/
 # --- GitHub 연동 함수 ---
 
 def get_github_repo():
-    """Secrets에서 설정된 토큰으로 깃허브 저장소 객체 반환"""
     try:
         token = st.secrets["GITHUB_TOKEN"]
         repo_name = st.secrets["REPO_NAME"]
@@ -29,10 +28,8 @@ def get_github_repo():
         return None
 
 def load_channels_from_github():
-    """깃허브의 channels.json 파일을 읽어옴"""
     repo = get_github_repo()
     if not repo: return []
-    
     try:
         contents = repo.get_contents("channels.json")
         json_data = contents.decoded_content.decode("utf-8")
@@ -42,15 +39,11 @@ def load_channels_from_github():
         return []
 
 def save_channels_to_github(new_data):
-    """변경된 데이터를 깃허브 channels.json에 저장(Commit)"""
     repo = get_github_repo()
     if not repo: return False
-    
     try:
         contents = repo.get_contents("channels.json")
-        # JSON을 예쁘게 포맷팅해서 저장 (한글 깨짐 방지 ensure_ascii=False)
         new_json_str = json.dumps(new_data, indent=4, ensure_ascii=False)
-        
         repo.update_file(
             path="channels.json",
             message="Update channels via Streamlit App",
@@ -74,27 +67,15 @@ def download_font_if_not_exists():
             except: pass
 
 def get_channel_info_from_handle(api_key, handle_str):
-    """핸들(@name)이나 URL을 입력받아 정확한 ID와 채널명을 반환"""
     youtube = build('youtube', 'v3', developerKey=api_key)
-    
-    # 입력값 정리 (URL 제거, @만 남기기)
     clean_handle = handle_str.strip()
     if "youtube.com/" in clean_handle:
         clean_handle = clean_handle.split("/")[-1]
-    
-    # 검색 쿼리 (@가 없으면 붙여서 검색 시도)
     query = clean_handle if clean_handle.startswith("@") else f"@{clean_handle}"
     
     try:
-        # 1. Search API로 채널 검색
-        request = youtube.search().list(
-            part="snippet",
-            q=query,
-            type="channel",
-            maxResults=1
-        )
+        request = youtube.search().list(part="snippet", q=query, type="channel", maxResults=1)
         response = request.execute()
-        
         if response['items']:
             item = response['items'][0]
             return item['id']['channelId'], item['snippet']['title'], query
@@ -111,12 +92,7 @@ def get_recent_video(api_key, channel_id, days=7):
         published_after = past.isoformat("T") + "Z"
 
         request = youtube.search().list(
-            part="snippet",
-            channelId=channel_id,
-            maxResults=1,
-            order="date",
-            publishedAfter=published_after,
-            type="video"
+            part="snippet", channelId=channel_id, maxResults=1, order="date", publishedAfter=published_after, type="video"
         )
         response = request.execute()
         if response.get("items"):
@@ -131,36 +107,27 @@ def get_recent_video(api_key, channel_id, days=7):
 
 def get_video_script(video_id):
     """
-    강력한 자막 추출 함수:
-    1. 한글 자막(수동/자동) 시도
-    2. 실패 시 영어 자막을 찾아 한글로 번역
-    3. 그 외 다른 언어 자막이라도 있으면 한글로 번역
+    강력한 자막 추출 함수: 한국어 -> 영어(자동번역) 순으로 시도
     """
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        # 1. 우선 한국어 자막이 있는지 찾습니다.
+        # 1. 한국어 자막 시도
         try:
             transcript = transcript_list.find_transcript(['ko'])
         except:
-            # 2. 한국어가 없다면, 번역 가능한 다른 자막(주로 영어)을 찾습니다.
+            # 2. 없으면 영어(또는 자동생성) 자막을 찾아 한국어로 번역
             try:
-                # 영어 자막이나 자동생성 자막을 찾음
                 transcript = transcript_list.find_transcript(['en'])
             except:
-                # 영어도 없으면, 리스트의 첫 번째(아무 언어) 자막을 가져옴
-                transcript = next(iter(transcript_list))
+                transcript = next(iter(transcript_list)) # 아무 언어나 가져옴
             
-            # 찾은 자막을 한국어로 번역합니다. (YouTube 내부 기능 활용)
-            transcript = transcript.translate('ko')
+            transcript = transcript.translate('ko') # 한국어로 번역
 
-        # 3. 텍스트 추출 및 합치기
         transcript_data = transcript.fetch()
-        full_script = " ".join([t['text'] for t in transcript_data])
-        return full_script
+        return " ".join([t['text'] for t in transcript_data])
 
     except Exception as e:
-        # 자막 기능 자체가 비활성화된 영상 등
         print(f"자막 추출 실패: {e}")
         return None
 
@@ -170,6 +137,12 @@ def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
     너는 'AI 에이전트 파견 비즈니스' 전문 컨설턴트야. 
     제공된 유튜브 스크립트를 분석해서, 소규모 기업 대상 AI 에이전트 임대 사업에 적용할 수 있는 
     구체적이고 실현 가능한 비즈니스 인사이트 5가지를 도출해줘.
+    
+    보고서 형식:
+    1. 영상 요약 (3줄)
+    2. 핵심 기술/트렌드 분석
+    3. AI 에이전트 비즈니스 적용 아이디어 5가지 (상세 기술)
+    4. 결론 및 제언
     """
     try:
         response = client.chat.completions.create(
@@ -200,24 +173,37 @@ def create_pdf(report_text):
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 데이터 로드 ---
-
-# 세션 상태에 채널 데이터가 없으면 깃허브에서 로드
 if 'channels' not in st.session_state:
     with st.spinner("데이터베이스 로딩 중..."):
         st.session_state['channels'] = load_channels_from_github()
 
 # --- UI 구현 ---
 
-st.title("🕵️‍♂️ 유튜브 서칭 기반 AI BM 탐색기")
-
-# 사이드바 키 설정
+# 사이드바 설정 (API 키 입력/확인 UI 개선)
 st.sidebar.header("🔑 설정")
-youtube_api_key = st.text_input("YouTube API Key", value=st.secrets.get("YOUTUBE_API_KEY", ""), type="password")
-openai_api_key = st.text_input("OpenAI API Key", value=st.secrets.get("OPENAI_API_KEY", ""), type="password")
 
+# 1. YouTube API Key 처리
+if "YOUTUBE_API_KEY" in st.secrets:
+    youtube_api_key = st.secrets["YOUTUBE_API_KEY"]
+    st.sidebar.success("✅ 유튜브 API 키값이 정상적으로 호출되었습니다.")
+else:
+    youtube_api_key = st.sidebar.text_input("YouTube API Key", type="password")
+
+# 2. OpenAI API Key 처리
+if "OPENAI_API_KEY" in st.secrets:
+    openai_api_key = st.secrets["OPENAI_API_KEY"]
+    st.sidebar.success("✅ OpenAI API 키값이 정상적으로 호출되었습니다.")
+else:
+    openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+
+# API 키가 없는 경우 경고 후 중단
 if not youtube_api_key or not openai_api_key:
-    st.warning("사이드바 또는 Secrets에 API 키를 설정해주세요.")
+    st.sidebar.error("API 키가 필요합니다.")
+    st.warning("좌측 사이드바에서 API 키를 설정해주세요.")
     st.stop()
+
+# 메인 타이틀
+st.title("🕵️‍♂️ 유튜브 서칭 기반 AI BM 탐색기")
 
 # 채널 선택 메뉴
 channel_list = st.session_state['channels']
@@ -233,7 +219,7 @@ if selection == "➕ [새 채널 추가]":
     
     if len(channel_list) >= 15:
         st.error("⚠️ 최대 15개까지만 등록 가능합니다. 기존 채널을 삭제해주세요.")
-        # 삭제 UI 표시
+        # 삭제 UI
         st.markdown("---")
         st.write("🗑️ **채널 정리하기**")
         for idx, ch in enumerate(channel_list):
@@ -251,7 +237,6 @@ if selection == "➕ [새 채널 추가]":
             if st.form_submit_button("검색 및 추가"):
                 cid, ctitle, chandle = get_channel_info_from_handle(youtube_api_key, new_handle)
                 if cid:
-                    # 중복 체크
                     if any(c['id'] == cid for c in channel_list):
                         st.warning("이미 등록된 채널입니다.")
                     else:
@@ -266,27 +251,23 @@ if selection == "➕ [새 채널 추가]":
 
 # === [로직 2: 기존 채널 분석 및 수정] ===
 else:
-    # 선택된 채널 객체 찾기
     selected_idx = channel_names.index(selection)
     target_channel = channel_list[selected_idx]
     
     st.write(f"📢 **'{target_channel['name']}'** 분석 대기 중")
 
-    # 관리 메뉴 (수정/삭제)
+    # 관리 메뉴
     with st.expander("⚙️ 채널 정보 수정 및 삭제"):
         st.subheader("✏️ 정보 수정")
         current_handle = target_channel.get('handle', '')
         
-        # 수정 폼
         with st.form("edit_form"):
             edit_handle = st.text_input("핸들 수정 (@name)", value=current_handle)
             if st.form_submit_button("수정 저장"):
                 cid, ctitle, chandle = get_channel_info_from_handle(youtube_api_key, edit_handle)
                 if cid:
-                    # 데이터 업데이트
                     updated_data = {"name": ctitle, "handle": chandle, "id": cid}
                     channel_list[selected_idx] = updated_data
-                    
                     if save_channels_to_github(channel_list):
                         st.success(f"✅ '{ctitle}'로 업데이트 및 저장되었습니다.")
                         st.session_state['channels'] = channel_list
@@ -313,11 +294,14 @@ else:
                 st.warning("최근 1주일 이내 업로드된 영상이 없습니다.")
             else:
                 st.write(f"🎥 영상 발견: {video_info['title']}")
+                st.write("📝 자막 추출 및 번역 시도 중...")
+                
+                # 수정된 자막 추출 함수 사용
                 script = get_video_script(video_info['video_id'])
                 
                 if not script:
                     status.update(label="자막 없음", state="error")
-                    st.error("이 영상에는 한글 자막이 없습니다.")
+                    st.error("이 영상에는 자막(CC)이 없어 분석할 수 없습니다.")
                 else:
                     st.write("🧠 AI 인사이트 도출 중...")
                     insight = analyze_with_gpt(openai_api_key, script, video_info['title'], target_channel['name'])
@@ -326,7 +310,6 @@ else:
                     st.subheader("📊 분석 결과")
                     st.markdown(insight)
                     
-                    # PDF
                     pdf_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n\n{insight}"
                     st.download_button("📥 PDF 다운로드", create_pdf(pdf_content), "report.pdf", "application/pdf")
 
