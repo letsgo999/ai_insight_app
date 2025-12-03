@@ -142,22 +142,24 @@ def create_pdf(report_text):
 st.title("🕵️‍♂️ AI 에이전트 비즈니스 인사이트 리포터")
 st.caption("Noto Sans KR 폰트 자동 적용 버전")
 
-# 사이드바 설정 (Secrets 자동 로드)
+# 사이드바 설정 (Secrets 자동 로드)# 사이드바 설정
 st.sidebar.header("설정 (Settings)")
 
+# 1. Secrets에 키가 있는지 먼저 확인
 if "YOUTUBE_API_KEY" in st.secrets:
     default_youtube_key = st.secrets["YOUTUBE_API_KEY"]
-    st.sidebar.success("✅ 유튜브 API 키 로드됨")
+    st.sidebar.success("유튜브 API 키가 로드되었습니다.")
 else:
     default_youtube_key = ""
 
 if "OPENAI_API_KEY" in st.secrets:
     default_openai_key = st.secrets["OPENAI_API_KEY"]
-    st.sidebar.success("✅ OpenAI API 키 로드됨")
+    st.sidebar.success("OpenAI API 키가 로드되었습니다.")
 else:
     default_openai_key = ""
 
-youtube_api_key = st.sidebar.text_input("YouTube API Key", value=default_youtube_key, type="password")
+# 2. Secrets 값이 있으면 자동으로 채워넣음 (없으면 빈칸)
+youtube_api_key = st.sidebar.text_input("YouTube Data API Key", value=default_youtube_key, type="password")
 openai_api_key = st.sidebar.text_input("OpenAI API Key", value=default_openai_key, type="password")
 
 if st.button("분석 시작 (Start Analysis)"):
