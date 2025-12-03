@@ -6,7 +6,7 @@ from fpdf import FPDF
 from datetime import datetime, timedelta
 import os
 import requests
-import re # URL 파싱용
+import re 
 
 # --- 초기 설정 및 데이터 ---
 
@@ -14,11 +14,11 @@ import re # URL 파싱용
 FONT_FILE = "NanumGothic.ttf"
 FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
 
-# 기본 11개 채널 데이터 (세션 상태 초기화용)
+# 기본 11개 채널 데이터
 DEFAULT_CHANNELS = [
     {"name": "조코딩", "id": "UCQNE2JmbasNYbjGAvenGU9g"},
     {"name": "AI코리아 커뮤니티", "id": "UC3SyTcoU-_peD8NKvlYKqag"},
-    {"name": "평범한 사업가", "id": "UCDhZ7Z8j7Z7Z8j7Z7Z8j7Z"}, # (실제 ID 필요)
+    {"name": "평범한 사업가", "id": "UCDhZ7Z8j7Z7Z8j7Z7Z8j7Z"},
     {"name": "인공지능 한이룸", "id": "UC-default-id-1"},
     {"name": "오빠두엑셀", "id": "UC-default-id-2"},
     {"name": "엑셀러TV", "id": "UC-default-id-3"},
@@ -29,14 +29,12 @@ DEFAULT_CHANNELS = [
     {"name": "에너지기술연구원", "id": "UC-default-id-8"},
 ]
 
-# 세션 상태에 채널 목록 관리 (새로고침해도 유지되도록)
 if 'channels' not in st.session_state:
     st.session_state['channels'] = DEFAULT_CHANNELS
 
 # --- 함수 정의 ---
 
 def download_font_if_not_exists():
-    """나눔고딕 폰트 다운로드"""
     if not os.path.exists(FONT_FILE):
         with st.spinner("한글 폰트(NanumGothic)를 다운로드 중입니다..."):
             try:
@@ -48,10 +46,8 @@ def download_font_if_not_exists():
                 st.error(f"폰트 다운로드 실패: {e}")
 
 def get_channel_id_from_input(api_key, input_str):
-    """입력된 URL이나 핸들(@name)에서 Channel ID 찾기"""
     youtube = build('youtube', 'v3', developerKey=api_key)
     
-    # 1. URL이나 핸들에서 키워드 추출
     if "youtube.com/channel/" in input_str:
         return input_str.split("channel/")[1].split("/")[0], None
     
@@ -61,7 +57,6 @@ def get_channel_id_from_input(api_key, input_str):
     elif "@" in input_str:
         handle = input_str.replace("@", "")
     
-    # 2. Search API로 채널 검색
     try:
         request = youtube.search().list(
             part="snippet",
@@ -79,7 +74,6 @@ def get_channel_id_from_input(api_key, input_str):
     return None, "채널을 찾을 수 없습니다."
 
 def get_recent_video(api_key, channel_id, days=7):
-    """선택한 채널의 최신 영상 1개 가져오기"""
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
         now = datetime.utcnow()
@@ -89,7 +83,7 @@ def get_recent_video(api_key, channel_id, days=7):
         request = youtube.search().list(
             part="snippet",
             channelId=channel_id,
-            maxResults=1, # 1개만 분석
+            maxResults=1,
             order="date",
             publishedAfter=published_after,
             type="video"
@@ -110,7 +104,6 @@ def get_recent_video(api_key, channel_id, days=7):
         return None
 
 def get_video_script(video_id):
-    """자막 추출"""
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ko'])
         return " ".join([t['text'] for t in transcript])
@@ -118,7 +111,6 @@ def get_video_script(video_id):
         return None
 
 def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
-    """GPT-4o 분석"""
     client = OpenAI(api_key=openai_api_key)
     system_prompt = """
     너는 'AI 에이전트 파견 비즈니스' 전문 컨설턴트야. 
@@ -138,9 +130,7 @@ def analyze_with_gpt(openai_api_key, script, video_title, channel_name):
         return f"분석 오류: {e}"
 
 def create_pdf(report_text):
-    """PDF 생성 (나눔고딕)"""
     download_font_if_not_exists()
-    
     class PDF(FPDF):
         def header(self):
             if os.path.exists(FONT_FILE):
@@ -150,7 +140,6 @@ def create_pdf(report_text):
 
     pdf = PDF()
     pdf.add_page()
-    
     if os.path.exists(FONT_FILE):
         pdf.add_font('NanumGothic', '', FONT_FILE, uni=True)
         pdf.set_font('NanumGothic', '', 11)
@@ -182,9 +171,8 @@ else:
 
 # --- 메인 인터페이스: 채널 선택 및 관리 ---
 
-# 채널 목록 준비
 channel_options = [c['name'] for c in st.session_state['channels']]
-channel_options.append("➕ [새 채널 추가]") # 맨 마지막에 추가 옵션
+channel_options.append("➕ [새 채널 추가]")
 
 st.subheader("1️⃣ 분석할 채널 선택")
 selected_option = st.selectbox("분석하고 싶은 유튜브 채널을 선택하세요:", channel_options)
@@ -193,12 +181,10 @@ selected_option = st.selectbox("분석하고 싶은 유튜브 채널을 선택�
 if selected_option == "➕ [새 채널 추가]":
     st.info("새로운 유튜브 채널을 목록에 추가합니다.")
     
-    # 채널 수 제한 체크 (15개)
     if len(st.session_state['channels']) >= 15:
         st.error("⚠️ 경고: 더 이상 채널을 추가할 수 없습니다. (최대 15개 제한)")
         st.warning("아래 목록에서 불필요한 채널을 삭제(X)하여 공간을 확보하세요.")
         
-        # 삭제 관리 UI (경고 상태일 때 자동 노출)
         st.markdown("---")
         st.write("🗑️ **채널 목록 관리 (삭제)**")
         for idx, ch in enumerate(st.session_state['channels']):
@@ -206,11 +192,9 @@ if selected_option == "➕ [새 채널 추가]":
             col1.write(f"**{ch['name']}**")
             if col2.button("삭제 ❌", key=f"del_{idx}"):
                 del st.session_state['channels'][idx]
-                st.rerun() # 즉시 새로고침
+                st.rerun()
         st.markdown("---")
-        
     else:
-        # 채널 추가 입력 폼
         with st.form("add_channel_form"):
             new_channel_input = st.text_input("채널 핸들(@name) 또는 URL 입력", placeholder="예: @jocoding")
             submit_add = st.form_submit_button("추가")
@@ -223,7 +207,6 @@ if selected_option == "➕ [새 채널 추가]":
                         cid, ctitle = get_channel_id_from_input(youtube_api_key, new_channel_input)
                         
                         if cid:
-                            # 중복 체크
                             if any(c['id'] == cid for c in st.session_state['channels']):
                                 st.warning("이미 목록에 있는 채널입니다.")
                             else:
@@ -233,19 +216,57 @@ if selected_option == "➕ [새 채널 추가]":
                         else:
                             st.error(f"채널 추가 실패: {ctitle}")
 
-# 일반 채널 선택 시 분석 UI
+# 일반 채널 선택 시 분석 UI (수정/삭제 기능 포함)
 elif selected_option:
-    # 선택된 채널 정보 찾기
     target_channel = next((item for item in st.session_state['channels'] if item["name"] == selected_option), None)
     
     if target_channel:
         st.write(f"📢 **'{target_channel['name']}'** 채널의 최근 1주일 영상을 분석합니다.")
         
-        # 채널 삭제 버튼 (개별 관리용)
-        with st.expander("이 채널 관리 (삭제)"):
-            if st.button("현재 선택된 채널 목록에서 삭제", key="del_current"):
+        # -----------------------------------------------------------------
+        # [채널 관리 기능 추가됨: 수정 및 삭제]
+        # -----------------------------------------------------------------
+        with st.expander("⚙️ 이 채널 관리 (수정/삭제)"):
+            
+            # 1. 수정 섹션
+            st.subheader("✏️ 채널 정보 수정")
+            with st.form("edit_channel_form"):
+                st.caption(f"현재 선택된 채널: **{target_channel['name']}**")
+                edit_input = st.text_input("변경할 주소(핸들 @name 또는 URL)를 입력하세요", placeholder="@new_handle")
+                
+                if st.form_submit_button("수정 저장"):
+                    if not youtube_api_key:
+                        st.error("API 키 설정이 필요합니다.")
+                    elif not edit_input:
+                        st.warning("수정할 주소를 입력해주세요.")
+                    else:
+                        with st.spinner("새로운 채널 정보를 확인 중입니다..."):
+                            # 새 주소로 ID 확인
+                            new_cid, new_ctitle = get_channel_id_from_input(youtube_api_key, edit_input)
+                            
+                            if new_cid:
+                                # 리스트에서 현재 채널을 찾아 업데이트
+                                for idx, ch in enumerate(st.session_state['channels']):
+                                    if ch['id'] == target_channel['id']:
+                                        st.session_state['channels'][idx] = {
+                                            "name": new_ctitle or edit_input, 
+                                            "id": new_cid
+                                        }
+                                        break
+                                st.success(f"✅ '{new_ctitle}'(으)로 정보가 업데이트되었습니다!")
+                                st.rerun() # 새로고침하여 반영
+                            else:
+                                st.error("유효하지 않은 채널 주소입니다.")
+
+            st.divider()
+
+            # 2. 삭제 섹션
+            st.subheader("🗑️ 채널 삭제")
+            if st.button("현재 채널 삭제 ❌", key="del_current_channel", type="primary"):
                 st.session_state['channels'] = [c for c in st.session_state['channels'] if c['id'] != target_channel['id']]
+                st.success("채널이 삭제되었습니다.")
                 st.rerun()
+        # -----------------------------------------------------------------
 
         if st.button("🚀 분석 및 리포트 생성 시작"):
             if not youtube_api_key or not openai_api_key:
@@ -260,7 +281,6 @@ elif selected_option:
                         st.warning("최근 1주일 이내 업로드된 영상이 없습니다.")
                     else:
                         st.write(f"🎥 영상 발견: {video_info['title']}")
-                        
                         st.write("📝 자막 추출 중...")
                         script = get_video_script(video_info['video_id'])
                         
@@ -273,11 +293,9 @@ elif selected_option:
                             
                             status.update(label="완료!", state="complete")
                             
-                            # 결과 보여주기
                             st.subheader("📊 분석 결과")
                             st.markdown(insight_text)
                             
-                            # PDF 다운로드
                             report_content = f"채널: {target_channel['name']}\n영상: {video_info['title']}\n일자: {datetime.now().strftime('%Y-%m-%d')}\n\n{insight_text}"
                             pdf_bytes = create_pdf(report_content)
                             
@@ -288,5 +306,5 @@ elif selected_option:
                                 mime="application/pdf"
                             )
 
-# 폰트 미리 다운로드 (배경 실행)
+# 폰트 미리 다운로드
 download_font_if_not_exists()
