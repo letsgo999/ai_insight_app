@@ -194,4 +194,5 @@ if st.button("분석 시작 (Start Analysis)"):
                 if script:
                     insight = analyze_with_gpt(openai_api_key, script, video['title'])
                     
-                    report_section = f"\n{'='*40}\n[채널: {channel['name']}] {video['title']}\n{'='
+                    report_section = f"\n{'='*40}\n[채널: {channel['name']}] {video['title']}\n{'='*40}\n{insight}\n\n"
+                    full_report += report_section
