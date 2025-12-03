@@ -1,0 +1,5 @@
+streamlit
+google-api-python-client
+youtube-transcript-api
+openai
+fpdf2
